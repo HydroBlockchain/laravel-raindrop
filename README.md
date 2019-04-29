@@ -84,7 +84,7 @@ Run the database migrations.
 php artisan migrate
 ```
 
-This will add the column `hydro_id`, `is_raindrop_enabled` and `is_raindrop_confirmed` to the `users` database table (table name is configurable, check `config/raindrop.php`).
+This will add the column `hydro_id`, `hydro_raindrop_enabled` and `hydro_raindrop_confirmed` to the `users` database table (table name is configurable, check `config/raindrop.php`).
 
 ### Middleware
 

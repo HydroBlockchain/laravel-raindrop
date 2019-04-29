@@ -38,8 +38,8 @@ class ResetHydro extends Command
             /** @var Model $user */
             $user = $userModelClass->findOrFail($this->argument('user'));
             $user->setAttribute('hydro_id', null);
-            $user->setAttribute('is_raindrop_enabled', null);
-            $user->setAttribute('is_raindrop_confirmed', null);
+            $user->setAttribute('hydro_raindrop_enabled', null);
+            $user->setAttribute('hydro_raindrop_confirmed', null);
             $user->save();
         } catch (Throwable $e) {
             $this->output->error('Could not reset Hydro Raindrop MFA for user: ' . $e->getMessage());

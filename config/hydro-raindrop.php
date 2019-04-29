@@ -5,9 +5,9 @@ declare(strict_types=1);
 return [
 
     /*
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     | API Settings
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     |
     | These API credentials can be obtained by signing up for an account
     | at https://hydrogenplatform.com and registering your application.
@@ -24,9 +24,9 @@ return [
     ],
 
     /*
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     | User Model Class
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     |
     | This must be a valid Eloquent Model class.
     |
@@ -35,9 +35,9 @@ return [
     'user_model_class' => 'App\\User',
 
     /*
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     | User Model Table
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     |
     | Table name where the application users are stored.
     |
@@ -46,9 +46,9 @@ return [
     'user_model_table' => 'users',
 
     /*
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     | MFA Lifetime (in seconds)
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     |
     | The user has a limited time period to enter the 6 digits from the app
     | into the form. If this time expires the MFA session will be reset and
@@ -59,9 +59,9 @@ return [
     'mfa_lifetime' => 90,
 
     /*
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     | MFA Verification Lifetime (in minutes)
-    |-----------------------------------------------------------------------
+    |---------------------------------------------------------------------------
     |
     | If the verification lifetime expires. The user must perform MFA again.
     | 0 = eternal.
@@ -69,5 +69,31 @@ return [
     */
 
     'mfa_verification_lifetime' => 0,
+
+
+    /*
+     |--------------------------------------------------------------------------
+     | MFA Method
+     |--------------------------------------------------------------------------
+     |
+     | optional = User decides to enable MFA on their account.
+     | prompted = MFA setup screen will be prompted after logging in.
+     |            User can skip this step and setup MFA later. (default)
+     | enforced = MFA is forced site wide. Users will have to setup MFA after
+     |            logging in.
+     */
+
+    'mfa_method' => 'prompted',
+
+    /*
+     |--------------------------------------------------------------------------
+     | MFA Maximum Attempts
+     |--------------------------------------------------------------------------
+     |
+     | The user account will be blocked if the number of attempts exceeds this
+     | value. (default: 0 = unlimited)
+     |
+     */
+    'mfa_maximum_attempts' => 0,
 
 ];
