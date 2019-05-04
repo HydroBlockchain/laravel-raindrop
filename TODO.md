@@ -1,0 +1,2 @@
+- Translation
+- Login check on 'blocked'

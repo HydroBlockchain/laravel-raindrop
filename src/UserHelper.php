@@ -50,31 +50,32 @@ final class UserHelper
      */
     public function enableHydro(): void
     {
-        $this->user->update([
+        $this->user->forceFill([
             'hydro_raindrop_enabled' => now(),
             'hydro_raindrop_confirmed' => null,
+            'hydro_raindrop_blocked' => null,
             'hydro_raindrop_failed_attempts' => 0,
-        ]);
+        ])->save();
     }
 
     /**
      * Disable Hydro Raindrop MFA for user.
      *
+     * @param string $hydroId
      * @return void
      * @throws UnregisterUserFailed
      */
-    public function unregisterHydro(): void
+    public function unregisterHydro(string $hydroId): void
     {
-        $hydroId = $this->user->getAttribute('hydro_id');
-
         $this->client->unregisterUser($hydroId);
 
-        $this->user->update([
+        $this->user->forceFill([
             'hydro_id' => null,
             'hydro_raindrop_enabled' => null,
             'hydro_raindrop_confirmed' => null,
+            'hydro_raindrop_blocked' => null,
             'hydro_raindrop_failed_attempts' => 0,
-        ]);
+        ])->save();
     }
 
     /**

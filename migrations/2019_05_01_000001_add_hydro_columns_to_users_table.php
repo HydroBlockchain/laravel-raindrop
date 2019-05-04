@@ -28,8 +28,12 @@ class AddHydroColumnsToUsersTable extends Migration
                 $table->dateTime('hydro_raindrop_confirmed')
                     ->nullable()
                     ->after('hydro_raindrop_enabled');
+                $table->dateTime('hydro_raindrop_blocked')
+                    ->nullable()
+                    ->after('hydro_raindrop_confirmed');
                 $table->integer('hydro_raindrop_failed_attempts')
-                    ->default(0);
+                    ->default(0)
+                    ->after('hydro_raindrop_blocked');
             }
         );
     }
@@ -47,7 +51,9 @@ class AddHydroColumnsToUsersTable extends Migration
                 $table->dropColumn([
                     'hydro_id',
                     'hydro_raindrop_enabled',
-                    'hydro_raindrop_confirmed'
+                    'hydro_raindrop_confirmed',
+                    'hydro_raindrop_blocked',
+                    'hydro_raindrop_failed_attempts',
                 ]);
             }
         );

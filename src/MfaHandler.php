@@ -16,7 +16,9 @@ use Adrenth\LaravelHydroRaindrop\Events\SignatureFailed;
 use Adrenth\LaravelHydroRaindrop\Events\SignatureVerified;
 use Exception;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Response;
@@ -81,6 +83,11 @@ final class MfaHandler
                 $user->getKey()
             ));
 
+            if ($this->request->has('hydro_cancel')) {
+                Auth::logout();
+                return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
+            }
+
             $response = $this->handleMfaSetup($user);
 
             if ($response !== null) {
@@ -89,6 +96,11 @@ final class MfaHandler
         }
 
         if ($userHelper->requiresMfa()) {
+            if ($this->request->has('hydro_cancel')) {
+                Auth::logout();
+                return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
+            }
+
             return $this->handleMfa($user);
         }
 
@@ -105,7 +117,7 @@ final class MfaHandler
         $error = null;
 
         if (!$this->session->isValid()) {
-            $error = 'Session has expired. A new Security Code has been generated. Please retry.';
+            $error = trans('Session has expired. A new Security Code has been generated. Please retry.');
             $this->session->start();
         } elseif ($this->request->has('hydro_verify')) {
             try {
@@ -114,11 +126,16 @@ final class MfaHandler
                     $this->session->getMessage()
                 );
 
-                $user->update([
-                    'hydro_raindrop_enabled' => date('Y-m-d H:i:s', $response->getTimestamp()),
-                    'hydro_raindrop_confirmed' => date('Y-m-d H:i:s', $response->getTimestamp()),
-                    'hydro_raindrop_failed_attempts' => 0,
-                ]);
+                if ($user->getAttribute('hydro_raindrop_enabled') === null) {
+                    $user->setAttribute('hydro_raindrop_enabled', date('Y-m-d H:i:s', $response->getTimestamp()));
+                }
+
+                if ($user->getAttribute('hydro_raindrop_confirmed') === null) {
+                    $user->setAttribute('hydro_raindrop_confirmed', date('Y-m-d H:i:s', $response->getTimestamp()));
+                }
+
+                $user->setAttribute('hydro_raindrop_failed_attempts', 0);
+                $user->save();
 
                 $this->session->destroy();
                 $this->session->setVerified();
@@ -127,9 +144,15 @@ final class MfaHandler
 
                 return redirect()->to($this->request->getPathInfo());
             } catch (VerifySignatureFailed $e) {
-                event(new SignatureFailed($user));
+                $response = $this->handleFailedMfaAttempt($user);
+
+                if ($response) {
+                    return $response;
+                }
+
                 $this->session->regenerateMessage();
-                $error = 'Verification failed. A new Security Code has been generated. Please retry.';
+
+                $error = trans('Verification failed. A new Security Code has been generated. Please retry.');
             }
         }
 
@@ -157,16 +180,16 @@ final class MfaHandler
 
             if ($validator->fails()) {
                 return response()->view('hydro-raindrop::mfa.setup', [
-                    'error' => 'Please provide a valid HydroID.'
+                    'error' => trans('Please provide a valid HydroID.'),
                 ]);
             }
 
             try {
                 $this->client->registerUser($hydroId);
 
-                /** @var Model $user */
-                $user->setAttribute('hydro_id', $hydroId);
-                $user->save();
+                $user->forceFill([
+                    'hydro_id' => $hydroId,
+                ])->save();
 
                 event(new HydroIdRegistered($user));
 
@@ -178,10 +201,10 @@ final class MfaHandler
                 event(new HydroIdAlreadyMapped($user, $hydroId));
                 $error = $this->userAlreadyMappedToApplication($user, $hydroId);
             } catch (UsernameDoesNotExist $e) {
-                $error = 'HydroID does not exist. Please review your input and try again.';
+                $error = trans('HydroID does not exist. Please review your input and try again.');
             } catch (RegisterUserFailed $e) {
                 $this->log->error($e->getMessage());
-                $error = 'Due to a system error your HydroID could not be registered.';
+                $error = trans('Due to a system error your HydroID could not be registered.');
             }
 
             if (isset($error)) {
@@ -191,6 +214,39 @@ final class MfaHandler
             }
         } else {
             return response()->view('hydro-raindrop::mfa.setup');
+        }
+
+        return null;
+    }
+
+    /**
+     * @param Model $user
+     * @return RedirectResponse|null
+     */
+    private function handleFailedMfaAttempt(Model $user): ?RedirectResponse
+    {
+        event(new SignatureFailed($user));
+
+        $user->setAttribute(
+            'hydro_raindrop_failed_attempts',
+            $user->getAttribute('hydro_raindrop_failed_attempts') + 1
+        );
+
+        $user->save();
+
+        $maximumAttempts = config('hydro-raindrop.mfa_maximum_attempts', 0);
+
+        if ($maximumAttempts > 0
+            && $user->getAttribute('hydro_raindrop_failed_attempts') > $maximumAttempts
+        ) {
+            $user->forceFill([
+                'hydro_raindrop_failed_attempts' => 0,
+                'hydro_raindrop_blocked' => now(),
+            ])->save();
+
+            Auth::logout();
+
+            return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
         }
 
         return null;
@@ -214,7 +270,7 @@ final class MfaHandler
         ));
 
         try {
-            UserHelper::create($user)->unregisterHydro();
+            UserHelper::create($user)->unregisterHydro($hydroId);
         } catch (UnregisterUserFailed $e) {
             $this->log->error(sprintf(
                 'Hydro Raindrop: Unregistering user %s failed: %s',
@@ -223,7 +279,9 @@ final class MfaHandler
             ));
         }
 
-        return 'Your HydroID was already mapped to this site. '
-            . 'Mapping is removed. Please re-enter your HydroID to proceed.';
+        return trans(
+            'Your HydroID was already mapped to this site. '
+            . 'Mapping is removed. Please re-enter your HydroID to proceed.'
+        );
     }
 }
