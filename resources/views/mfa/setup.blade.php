@@ -31,6 +31,15 @@
                                 <div class="col-xs-12 col-sm-4 col-md-6">
                                     <button class="btn btn-block btn-primary" type="submit">{{ __('Submit') }}</button>
                                 </div>
+                                @if($mfaMethod !== 'enforced')
+                                    <div class="col-xs-12 mt-3 text-center">
+                                        <a href="?hydro_skip=1">{{ __('Skip') }}</a>
+                                    </div>
+                                @else
+                                    <div class="col-xs-12 mt-3 text-center">
+                                        <a href="?hydro_cancel=1">{{ __('Cancel') }}</a>
+                                    </div>
+                                @endif
                             </div>
                                 @isset($error)
                                     <p class="text-danger mt-3">{{ $error }}</p>

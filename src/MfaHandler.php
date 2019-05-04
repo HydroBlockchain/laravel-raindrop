@@ -10,10 +10,7 @@ use Adrenth\Raindrop\Exception\UnregisterUserFailed;
 use Adrenth\Raindrop\Exception\UserAlreadyMappedToApplication;
 use Adrenth\Raindrop\Exception\UsernameDoesNotExist;
 use Adrenth\Raindrop\Exception\VerifySignatureFailed;
-use Adrenth\LaravelHydroRaindrop\Events\HydroIdAlreadyMapped;
-use Adrenth\LaravelHydroRaindrop\Events\HydroIdRegistered;
-use Adrenth\LaravelHydroRaindrop\Events\SignatureFailed;
-use Adrenth\LaravelHydroRaindrop\Events\SignatureVerified;
+use Adrenth\LaravelHydroRaindrop\Events;
 use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\RedirectResponse;
@@ -83,9 +80,13 @@ final class MfaHandler
                 $user->getKey()
             ));
 
-            if ($this->request->has('hydro_cancel')) {
+            if ($this->request->has('hydro_cancel') && $this->mfaMethodIsEnforced()) {
                 Auth::logout();
                 return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
+            }
+
+            if ($this->request->has('hydro_skip') && !$this->mfaMethodIsEnforced()) {
+                return null;
             }
 
             $response = $this->handleMfaSetup($user);
@@ -140,7 +141,7 @@ final class MfaHandler
                 $this->session->destroy();
                 $this->session->setVerified();
 
-                event(new SignatureVerified($user));
+                event(new Events\SignatureVerified($user));
 
                 return redirect()->to($this->request->getPathInfo());
             } catch (VerifySignatureFailed $e) {
@@ -170,50 +171,54 @@ final class MfaHandler
      */
     private function handleMfaSetup(Model $user): ?Response
     {
-        if ($this->request->has('hydro_id')) {
-            $hydroId = $this->request->get('hydro_id');
+        $hydroId = $this->request->get('hydro_id');
 
-            $validator = Validator::make(
-                ['hydro_id' => $hydroId],
-                ['hydro_id' => 'min:3|max:32|required']
-            );
+        if ($hydroId === null) {
+            return response()->view('hydro-raindrop::mfa.setup', [
+                'mfaMethod' => $this->getMfaMethod(),
+            ]);
+        }
 
-            if ($validator->fails()) {
-                return response()->view('hydro-raindrop::mfa.setup', [
-                    'error' => trans('Please provide a valid HydroID.'),
-                ]);
-            }
+        $validator = Validator::make(
+            ['hydro_id' => $hydroId],
+            ['hydro_id' => 'min:3|max:32|required']
+        );
 
-            try {
-                $this->client->registerUser($hydroId);
+        if ($validator->fails()) {
+            return response()->view('hydro-raindrop::mfa.setup', [
+                'error' => trans('Please provide a valid HydroID.'),
+                'mfaMethod' => config('hydro-raindrop.mfa_method', 'prompted')
+            ]);
+        }
 
-                $user->forceFill([
-                    'hydro_id' => $hydroId,
-                ])->save();
+        try {
+            $this->client->registerUser($hydroId);
 
-                event(new HydroIdRegistered($user));
+            $user->forceFill([
+                'hydro_id' => $hydroId,
+            ])->save();
 
-                $this->log->debug(sprintf(
-                    'Hydro Raindrop: User %d has successfully registered a HydroID.',
-                    $user->getKey()
-                ));
-            } catch (UserAlreadyMappedToApplication $e) {
-                event(new HydroIdAlreadyMapped($user, $hydroId));
-                $error = $this->userAlreadyMappedToApplication($user, $hydroId);
-            } catch (UsernameDoesNotExist $e) {
-                $error = trans('HydroID does not exist. Please review your input and try again.');
-            } catch (RegisterUserFailed $e) {
-                $this->log->error($e->getMessage());
-                $error = trans('Due to a system error your HydroID could not be registered.');
-            }
+            event(new Events\HydroIdRegistered($user));
 
-            if (isset($error)) {
-                return response()->view('hydro-raindrop::mfa.setup', [
-                    'error' => $error
-                ]);
-            }
-        } else {
-            return response()->view('hydro-raindrop::mfa.setup');
+            $this->log->debug(sprintf(
+                'Hydro Raindrop: User %d has successfully registered a HydroID.',
+                $user->getKey()
+            ));
+        } catch (UserAlreadyMappedToApplication $e) {
+            event(new Events\HydroIdAlreadyMapped($user, $hydroId));
+            $error = $this->userAlreadyMappedToApplication($user, $hydroId);
+        } catch (UsernameDoesNotExist $e) {
+            $error = trans('HydroID does not exist. Please review your input and try again.');
+        } catch (RegisterUserFailed $e) {
+            $this->log->error($e->getMessage());
+            $error = trans('Due to a system error your HydroID could not be registered.');
+        }
+
+        if (isset($error)) {
+            return response()->view('hydro-raindrop::mfa.setup', [
+                'error' => $error,
+                'mfaMethod' => $this->getMfaMethod(),
+            ]);
         }
 
         return null;
@@ -225,7 +230,7 @@ final class MfaHandler
      */
     private function handleFailedMfaAttempt(Model $user): ?RedirectResponse
     {
-        event(new SignatureFailed($user));
+        event(new Events\SignatureFailed($user));
 
         $user->setAttribute(
             'hydro_raindrop_failed_attempts',
@@ -281,7 +286,24 @@ final class MfaHandler
 
         return trans(
             'Your HydroID was already mapped to this site. '
-            . 'Mapping is removed. Please re-enter your HydroID to proceed.'
+            . 'Mapping is now removed. Refresh your accounts in the Hydro app '
+            . 'and tap "Add New Account" and follow the instructions. '
         );
+    }
+
+    /**
+     * @return string
+     */
+    private function getMfaMethod(): string
+    {
+        return (string) config('hydro-raindrop.mfa_method', 'prompted');
+    }
+
+    /**
+     * @return bool
+     */
+    private function mfaMethodIsEnforced(): bool
+    {
+        return $this->getMfaMethod() === 'enforced';
     }
 }
