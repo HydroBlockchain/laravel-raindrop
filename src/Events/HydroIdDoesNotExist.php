@@ -7,11 +7,11 @@ namespace Adrenth\LaravelHydroRaindrop\Events;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Class HydroIdRegistered
+ * Class HydroIdDoesNotExist
  *
  * @package Adrenth\LaravelHydroRaindrop\Events
  */
-class HydroIdRegistered
+class HydroIdDoesNotExist
 {
     /**
      * @var Model

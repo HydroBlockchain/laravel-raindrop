@@ -5,27 +5,26 @@ declare(strict_types=1);
 namespace Adrenth\LaravelHydroRaindrop\Console;
 
 use Adrenth\LaravelHydroRaindrop\MfaHandler;
-use Adrenth\LaravelHydroRaindrop\UserHelper;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Throwable;
 
 /**
- * Class ResetHydro
+ * Class UnblockUser
  *
  * @package Adrenth\LaravelHydroRaindrop\Console
  */
-class ResetHydro extends Command
+class UnblockUser extends Command
 {
     /**
      * {@inheritDoc}
      */
-    protected $signature = 'hydro-raindrop:reset-hydro {user}';
+    protected $signature = 'hydro-raindrop:unblock-user {user}';
 
     /**
      * {@inheritDoc}
      */
-    protected $description = 'Reset Hydro Raindrop MFA for user.';
+    protected $description = 'Unblock given user which was blocked due too many failed MFA attempts.';
 
     /**
      * Handle the command.
@@ -44,7 +43,7 @@ class ResetHydro extends Command
             $mfaHandler = resolve(MfaHandler::class);
 
             $userHelper = $mfaHandler->getUserHelper($user);
-            $userHelper->reset();
+            $userHelper->unblock();
         } catch (Throwable $e) {
             $this->output->error('Could not reset Hydro Raindrop MFA for user: ' . $e->getMessage());
         }

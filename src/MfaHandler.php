@@ -4,19 +4,19 @@ declare(strict_types=1);
 
 namespace Adrenth\LaravelHydroRaindrop;
 
+use Adrenth\LaravelHydroRaindrop\Contracts\UserHelper as UserHelperInterface;
 use Adrenth\Raindrop\Client;
 use Adrenth\Raindrop\Exception\RegisterUserFailed;
 use Adrenth\Raindrop\Exception\UnregisterUserFailed;
 use Adrenth\Raindrop\Exception\UserAlreadyMappedToApplication;
 use Adrenth\Raindrop\Exception\UsernameDoesNotExist;
 use Adrenth\Raindrop\Exception\VerifySignatureFailed;
-use Adrenth\LaravelHydroRaindrop\Events\HydroIdAlreadyMapped;
-use Adrenth\LaravelHydroRaindrop\Events\HydroIdRegistered;
-use Adrenth\LaravelHydroRaindrop\Events\SignatureFailed;
-use Adrenth\LaravelHydroRaindrop\Events\SignatureVerified;
+use Adrenth\LaravelHydroRaindrop\Events;
 use Exception;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Response;
@@ -67,17 +67,34 @@ final class MfaHandler
     }
 
     /**
+     * Handle a unverified request.
+     *
+     * Two possible scenario's will be handled by this method:
+     * - User account requires MFA Setup; the setup screen will be displayed.
+     * - Request requires MFA; the MFA screen will be displayed.
+     *
      * @param Model $user
      * @return Response|null
      * @throws Exception
      */
     public function handle(Model $user): ?Response
     {
-        if ($this->userRequiresMfaSetup($user)) {
+        $userHelper = $this->getUserHelper($user);
+
+        if ($userHelper->requiresMfaSetup()) {
             $this->log->debug(sprintf(
                 'Hydro Raindrop: User %d is required to setup Hydro Raindrop MFA.',
                 $user->getKey()
             ));
+
+            if ($this->request->has('hydro_cancel') && $this->mfaMethodIsEnforced()) {
+                Auth::logout();
+                return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
+            }
+
+            if ($this->request->has('hydro_skip') && !$this->mfaMethodIsEnforced()) {
+                return null;
+            }
 
             $response = $this->handleMfaSetup($user);
 
@@ -86,7 +103,12 @@ final class MfaHandler
             }
         }
 
-        if ($this->userRequiresMfa($user)) {
+        if ($userHelper->requiresMfa()) {
+            if ($this->request->has('hydro_cancel')) {
+                Auth::logout();
+                return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
+            }
+
             return $this->handleMfa($user);
         }
 
@@ -94,6 +116,28 @@ final class MfaHandler
     }
 
     /**
+     * Will fire the `UserLoginIsBlocked` event and logout the user and redirect
+     * back to the login form.
+     *
+     * @param Model $user
+     * @return Response
+     */
+    public function handleBlocked(Model $user): Response
+    {
+        /*
+         * Listening to this event allows developers to generate a Flash message
+         * or something similar to inform users why they cannot login.
+         */
+        event(new Events\UserLoginIsBlocked($user));
+
+        Auth::logout();
+
+        return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
+    }
+
+    /**
+     * Handle the MFA request for given User.
+     *
      * @param Model $user
      * @return Response|null
      * @throws Exception
@@ -103,29 +147,42 @@ final class MfaHandler
         $error = null;
 
         if (!$this->session->isValid()) {
-            $error = 'Session has expired. A new Security Code has been generated. Please retry.';
+            $error = trans('Session has expired. A new Security Code has been generated. Please retry.');
             $this->session->start();
         } elseif ($this->request->has('hydro_verify')) {
             try {
-                $this->client->verifySignature(
+                $response = $this->client->verifySignature(
                     $user->getAttribute('hydro_id'),
                     $this->session->getMessage()
                 );
 
-                $user->setAttribute('is_raindrop_enabled', now());
-                $user->setAttribute('is_raindrop_confirmed', now());
+                if ($user->getAttribute('hydro_raindrop_enabled') === null) {
+                    $user->setAttribute('hydro_raindrop_enabled', date('Y-m-d H:i:s', $response->getTimestamp()));
+                }
+
+                if ($user->getAttribute('hydro_raindrop_confirmed') === null) {
+                    $user->setAttribute('hydro_raindrop_confirmed', date('Y-m-d H:i:s', $response->getTimestamp()));
+                }
+
+                $user->setAttribute('hydro_raindrop_failed_attempts', 0);
                 $user->save();
 
                 $this->session->destroy();
                 $this->session->setVerified();
 
-                event(new SignatureVerified($user));
+                event(new Events\SignatureVerified($user));
 
                 return redirect()->to($this->request->getPathInfo());
             } catch (VerifySignatureFailed $e) {
-                event(new SignatureFailed($user));
+                $response = $this->handleFailedMfaAttempt($user);
+
+                if ($response) {
+                    return $response;
+                }
+
                 $this->session->regenerateMessage();
-                $error = 'Verification failed. A new Security Code has been generated. Please retry.';
+
+                $error = trans('Verification failed. A new Security Code has been generated. Please retry.');
             }
         }
 
@@ -136,57 +193,106 @@ final class MfaHandler
     }
 
     /**
-     * Handle MFA setup.
+     * Handle MFA setup for given User.
      *
      * @param Model $user
      * @return Response|null
      */
     private function handleMfaSetup(Model $user): ?Response
     {
-        if ($this->request->has('hydro_id')) {
-            $hydroId = $this->request->get('hydro_id');
+        $hydroId = $this->request->get('hydro_id');
 
-            $validator = Validator::make(
-                ['hydro_id' => $hydroId],
-                ['hydro_id' => 'min:3|max:32|required']
-            );
+        if ($hydroId === null) {
+            return response()->view('hydro-raindrop::mfa.setup', [
+                'mfaMethod' => $this->getMfaMethod(),
+            ]);
+        }
 
-            if ($validator->fails()) {
-                return response()->view('hydro-raindrop::mfa.setup', [
-                    'error' => 'Please provide a valid HydroID.'
-                ]);
-            }
+        $validator = Validator::make(
+            ['hydro_id' => $hydroId],
+            ['hydro_id' => 'min:3|max:32|required']
+        );
 
-            try {
-                $this->client->registerUser($hydroId);
+        if ($validator->fails()) {
+            return response()->view('hydro-raindrop::mfa.setup', [
+                'error' => trans('Please provide a valid HydroID.'),
+                'mfaMethod' => config('hydro-raindrop.mfa_method', 'prompted')
+            ]);
+        }
 
-                /** @var Model $user */
-                $user->setAttribute('hydro_id', $hydroId);
-                $user->save();
+        try {
+            $this->client->registerUser($hydroId);
 
-                event(new HydroIdRegistered($user));
+            $user->forceFill([
+                'hydro_id' => $hydroId,
+            ])->save();
 
-                $this->log->debug(sprintf(
-                    'Hydro Raindrop: User %d has successfully registered a HydroID.',
-                    $user->getKey()
-                ));
-            } catch (UserAlreadyMappedToApplication $e) {
-                event(new HydroIdAlreadyMapped($user, $hydroId));
-                $error = $this->userAlreadyMappedToApplication($user, $hydroId);
-            } catch (UsernameDoesNotExist $e) {
-                $error = 'HydroID does not exist. Please review your input and try again.';
-            } catch (RegisterUserFailed $e) {
-                $this->log->error($e->getMessage());
-                $error = 'Due to a system error your HydroID could not be registered.';
-            }
+            event(new Events\HydroIdRegistered($user, $hydroId));
 
-            if (isset($error)) {
-                return response()->view('hydro-raindrop::mfa.setup', [
-                    'error' => $error
-                ]);
-            }
-        } else {
-            return response()->view('hydro-raindrop::mfa.setup');
+            $this->log->debug(sprintf(
+                'Hydro Raindrop: User %d has successfully registered a HydroID.',
+                $user->getKey()
+            ));
+        } catch (UserAlreadyMappedToApplication $e) {
+            event(new Events\HydroIdAlreadyMapped($user, $hydroId));
+            $error = $this->userAlreadyMappedToApplication($user, $hydroId);
+        } catch (UsernameDoesNotExist $e) {
+            event(new Events\HydroIdDoesNotExist($user, $hydroId));
+            $error = trans('HydroID does not exist. Please review your input and try again.');
+        } catch (RegisterUserFailed $e) {
+            event(new Events\HydroIdRegistrationFailed($user, $hydroId));
+            $this->log->error($e->getMessage());
+            $error = trans('Due to a system error your HydroID could not be registered.');
+        }
+
+        if (isset($error)) {
+            return response()->view('hydro-raindrop::mfa.setup', [
+                'error' => $error,
+                'mfaMethod' => $this->getMfaMethod(),
+            ]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Handle a failed MFA attempt.
+     *
+     * This will increase the `hydro_raindrop_failed_attempts` attribute on the
+     * User model and may logout the user if the configured maximum failed
+     * attempts have been exceeded.
+     *
+     * May return a RedirectResponse which routes to the login form.
+     *
+     * @param Model $user
+     * @return RedirectResponse|null
+     */
+    private function handleFailedMfaAttempt(Model $user): ?RedirectResponse
+    {
+        event(new Events\SignatureFailed($user));
+
+        $user->setAttribute(
+            'hydro_raindrop_failed_attempts',
+            $user->getAttribute('hydro_raindrop_failed_attempts') + 1
+        );
+
+        $user->save();
+
+        $maximumAttempts = config('hydro-raindrop.mfa_maximum_attempts', 0);
+
+        if ($maximumAttempts > 0
+            && $user->getAttribute('hydro_raindrop_failed_attempts') > $maximumAttempts
+        ) {
+            $user->forceFill([
+                'hydro_raindrop_failed_attempts' => 0,
+                'hydro_raindrop_blocked' => now(),
+            ])->save();
+
+            event(new Events\UserIsBlocked($user));
+
+            Auth::logout();
+
+            return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
         }
 
         return null;
@@ -210,12 +316,10 @@ final class MfaHandler
         ));
 
         try {
-            $this->client->unregisterUser($hydroId);
+            event(new Events\HydroIdRegistered($user, $hydroId));
 
-            $user->setAttribute('hydro_id', null);
-            $user->setAttribute('is_raindrop_enabled', null);
-            $user->setAttribute('is_raindrop_confirmed', null);
-            $user->save();
+            $userHelper = $this->getUserHelper($user);
+            $userHelper->unregisterHydro($hydroId);
         } catch (UnregisterUserFailed $e) {
             $this->log->error(sprintf(
                 'Hydro Raindrop: Unregistering user %s failed: %s',
@@ -224,30 +328,41 @@ final class MfaHandler
             ));
         }
 
-        return 'Your HydroID was already mapped to this site. '
-            . 'Mapping is removed. Please re-enter your HydroID to proceed.';
+        return trans(
+            'Your HydroID was already mapped to this site. '
+            . 'Mapping is now removed. Refresh your accounts in the Hydro app '
+            . 'and tap "Add New Account" and follow the instructions. '
+        );
+    }
+
+    /**
+     * @return string
+     */
+    public function getMfaMethod(): string
+    {
+        return (string) config('hydro-raindrop.mfa_method', 'prompted');
+    }
+
+    /**
+     * @return bool
+     */
+    public function mfaMethodIsEnforced(): bool
+    {
+        return $this->getMfaMethod() === 'enforced';
     }
 
     /**
      * @param Model $user
-     * @return bool
+     * @return UserHelperInterface
      */
-    private function userRequiresMfa(Model $user): bool
+    public function getUserHelper(Model $user): UserHelperInterface
     {
-        $hydroId = $user->getAttribute('hydro_id');
-        $mfaEnabled = (bool) $user->getAttribute('is_raindrop_enabled');
-        $mfaConfirmed = (bool) $user->getAttribute('is_raindrop_confirmed');
+        $userHelper = resolve(UserHelperInterface::class);
 
-        return (!empty($hydroId) && $mfaEnabled && $mfaConfirmed)
-            || (!empty($hydroId) && !$mfaEnabled && !$mfaConfirmed);
-    }
+        if ($userHelper instanceof UserHelper) {
+            $userHelper->setUser($user);
+        }
 
-    /**
-     * @param Model $user
-     * @return bool
-     */
-    public function userRequiresMfaSetup(Model $user): bool
-    {
-        return empty($user->getAttribute('hydro_id'));
+        return $userHelper;
     }
 }

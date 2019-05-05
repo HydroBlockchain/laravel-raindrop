@@ -22,12 +22,18 @@ class AddHydroColumnsToUsersTable extends Migration
                 $table->string('hydro_id')
                     ->nullable()
                     ->after('remember_token');
-                $table->dateTime('is_raindrop_enabled')
+                $table->dateTime('hydro_raindrop_enabled')
                     ->nullable()
                     ->after('hydro_id');
-                $table->dateTime('is_raindrop_confirmed')
+                $table->dateTime('hydro_raindrop_confirmed')
                     ->nullable()
-                    ->after('is_raindrop_enabled');
+                    ->after('hydro_raindrop_enabled');
+                $table->dateTime('hydro_raindrop_blocked')
+                    ->nullable()
+                    ->after('hydro_raindrop_confirmed');
+                $table->integer('hydro_raindrop_failed_attempts')
+                    ->default(0)
+                    ->after('hydro_raindrop_blocked');
             }
         );
     }
@@ -44,8 +50,10 @@ class AddHydroColumnsToUsersTable extends Migration
             static function (Blueprint $table) {
                 $table->dropColumn([
                     'hydro_id',
-                    'is_raindrop_enabled',
-                    'is_raindrop_confirmed'
+                    'hydro_raindrop_enabled',
+                    'hydro_raindrop_confirmed',
+                    'hydro_raindrop_blocked',
+                    'hydro_raindrop_failed_attempts',
                 ]);
             }
         );

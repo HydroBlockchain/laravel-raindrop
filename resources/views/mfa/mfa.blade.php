@@ -26,7 +26,9 @@
                                 {{ __('Authenticate') }}
                             </button>
                         </form>
-
+                        <div class="mt-3">
+                            <a href="?hydro_cancel=1">{{ __('Cancel') }}</a>
+                        </div>
                     </div>
                 </div>
             </div>
