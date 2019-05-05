@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Adrenth\LaravelHydroRaindrop;
 
+use Adrenth\LaravelHydroRaindrop\Contracts\UserHelper as UserHelperInterface;
 use Adrenth\Raindrop;
 use Adrenth\LaravelHydroRaindrop\Console\ResetHydro;
 use Adrenth\LaravelHydroRaindrop\Listeners\DestroySession;
@@ -120,5 +121,11 @@ class ServiceProvider extends EventServiceProvider
                 resolve(LoggerInterface::class)
             );
         });
+
+        $this->app->bind(UserHelper::class, static function () {
+            return new UserHelper(resolve(Raindrop\Client::class));
+        });
+
+        $this->app->alias(UserHelper::class, UserHelperInterface::class);
     }
 }

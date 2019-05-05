@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Adrenth\LaravelHydroRaindrop;
 
+use Adrenth\LaravelHydroRaindrop\Contracts\UserHelper as UserHelperInterface;
 use Adrenth\Raindrop\Client;
 use Adrenth\Raindrop\Exception\RegisterUserFailed;
 use Adrenth\Raindrop\Exception\UnregisterUserFailed;
@@ -66,13 +67,19 @@ final class MfaHandler
     }
 
     /**
+     * Handle a unverified request.
+     *
+     * Two possible scenario's will be handled by this method:
+     * - User account requires MFA Setup; the setup screen will be displayed.
+     * - Request requires MFA; the MFA screen will be displayed.
+     *
      * @param Model $user
      * @return Response|null
      * @throws Exception
      */
     public function handle(Model $user): ?Response
     {
-        $userHelper = UserHelper::create($user);
+        $userHelper = $this->getUserHelper($user);
 
         if ($userHelper->requiresMfaSetup()) {
             $this->log->debug(sprintf(
@@ -109,6 +116,28 @@ final class MfaHandler
     }
 
     /**
+     * Will fire the `UserLoginIsBlocked` event and logout the user and redirect
+     * back to the login form.
+     *
+     * @param Model $user
+     * @return Response
+     */
+    public function handleBlocked(Model $user): Response
+    {
+        /*
+         * Listening to this event allows developers to generate a Flash message
+         * or something similar to inform users why they cannot login.
+         */
+        event(new Events\UserLoginIsBlocked($user));
+
+        Auth::logout();
+
+        return redirect()->route(config('hydro-raindrop.login_route_name', 'login'));
+    }
+
+    /**
+     * Handle the MFA request for given User.
+     *
      * @param Model $user
      * @return Response|null
      * @throws Exception
@@ -164,7 +193,7 @@ final class MfaHandler
     }
 
     /**
-     * Handle MFA setup.
+     * Handle MFA setup for given User.
      *
      * @param Model $user
      * @return Response|null
@@ -198,7 +227,7 @@ final class MfaHandler
                 'hydro_id' => $hydroId,
             ])->save();
 
-            event(new Events\HydroIdRegistered($user));
+            event(new Events\HydroIdRegistered($user, $hydroId));
 
             $this->log->debug(sprintf(
                 'Hydro Raindrop: User %d has successfully registered a HydroID.',
@@ -208,8 +237,10 @@ final class MfaHandler
             event(new Events\HydroIdAlreadyMapped($user, $hydroId));
             $error = $this->userAlreadyMappedToApplication($user, $hydroId);
         } catch (UsernameDoesNotExist $e) {
+            event(new Events\HydroIdDoesNotExist($user, $hydroId));
             $error = trans('HydroID does not exist. Please review your input and try again.');
         } catch (RegisterUserFailed $e) {
+            event(new Events\HydroIdRegistrationFailed($user, $hydroId));
             $this->log->error($e->getMessage());
             $error = trans('Due to a system error your HydroID could not be registered.');
         }
@@ -225,6 +256,14 @@ final class MfaHandler
     }
 
     /**
+     * Handle a failed MFA attempt.
+     *
+     * This will increase the `hydro_raindrop_failed_attempts` attribute on the
+     * User model and may logout the user if the configured maximum failed
+     * attempts have been exceeded.
+     *
+     * May return a RedirectResponse which routes to the login form.
+     *
      * @param Model $user
      * @return RedirectResponse|null
      */
@@ -248,6 +287,8 @@ final class MfaHandler
                 'hydro_raindrop_failed_attempts' => 0,
                 'hydro_raindrop_blocked' => now(),
             ])->save();
+
+            event(new Events\UserIsBlocked($user));
 
             Auth::logout();
 
@@ -275,7 +316,10 @@ final class MfaHandler
         ));
 
         try {
-            UserHelper::create($user)->unregisterHydro($hydroId);
+            event(new Events\HydroIdRegistered($user, $hydroId));
+
+            $userHelper = $this->getUserHelper($user);
+            $userHelper->unregisterHydro($hydroId);
         } catch (UnregisterUserFailed $e) {
             $this->log->error(sprintf(
                 'Hydro Raindrop: Unregistering user %s failed: %s',
@@ -294,7 +338,7 @@ final class MfaHandler
     /**
      * @return string
      */
-    private function getMfaMethod(): string
+    public function getMfaMethod(): string
     {
         return (string) config('hydro-raindrop.mfa_method', 'prompted');
     }
@@ -302,8 +346,23 @@ final class MfaHandler
     /**
      * @return bool
      */
-    private function mfaMethodIsEnforced(): bool
+    public function mfaMethodIsEnforced(): bool
     {
         return $this->getMfaMethod() === 'enforced';
+    }
+
+    /**
+     * @param Model $user
+     * @return UserHelperInterface
+     */
+    public function getUserHelper(Model $user): UserHelperInterface
+    {
+        $userHelper = resolve(UserHelperInterface::class);
+
+        if ($userHelper instanceof UserHelper) {
+            $userHelper->setUser($user);
+        }
+
+        return $userHelper;
     }
 }

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Adrenth\LaravelHydroRaindrop;
 
+use Adrenth\LaravelHydroRaindrop\Contracts\UserHelper as UserHelperInterface;
 use Adrenth\Raindrop\Client;
-use Adrenth\Raindrop\Exception\UnregisterUserFailed;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Model;
  *
  * @package Adrenth\LaravelHydroRaindrop
  */
-final class UserHelper
+final class UserHelper implements UserHelperInterface
 {
     /**
      * @var Model
@@ -26,21 +26,30 @@ final class UserHelper
     private $client;
 
     /**
-     * @param Model $user
+     * @param Client $client
      */
-    public function __construct(Model $user)
+    public function __construct(Client $client)
     {
-        $this->user = $user;
-        $this->client = resolve(Client::class);
+        $this->client = $client;
+        $this->user = resolve(config('hydro-raindrop.user_model_class'));
     }
 
     /**
      * @param Model $user
      * @return UserHelper
      */
-    public static function create(Model $user): UserHelper
+    public function setUser(Model $user): UserHelper
     {
-        return new self($user);
+        $this->user = $user;
+        return $this;
+    }
+
+    /**
+     * @return bool
+     */
+    public function isBlocked(): bool
+    {
+        return $this->user->getAttribute('hydro_raindrop_blocked') !== null;
     }
 
     /**
@@ -59,11 +68,7 @@ final class UserHelper
     }
 
     /**
-     * Disable Hydro Raindrop MFA for user.
-     *
-     * @param string $hydroId
-     * @return void
-     * @throws UnregisterUserFailed
+     * {@inheritDoc}
      */
     public function unregisterHydro(string $hydroId): void
     {
@@ -79,7 +84,32 @@ final class UserHelper
     }
 
     /**
-     * @return bool
+     * {@inheritDoc}
+     */
+    public function unblock(): void
+    {
+        $this->user->forceFill([
+            'hydro_raindrop_blocked' => null,
+            'hydro_raindrop_failed_attempts' => 0,
+        ])->save();
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function reset(): void
+    {
+        $this->user->forceFill([
+            'hydro_id' => null,
+            'hydro_raindrop_enabled' => null,
+            'hydro_raindrop_confirmed' => null,
+            'hydro_raindrop_blocked' => null,
+            'hydro_raindrop_failed_attempts' => 0,
+        ])->save();
+    }
+
+    /**
+     * {@inheritDoc}
      */
     public function requiresMfa(): bool
     {
@@ -92,7 +122,7 @@ final class UserHelper
     }
 
     /**
-     * @return bool
+     * {@inheritDoc}
      */
     public function requiresMfaSetup(): bool
     {
