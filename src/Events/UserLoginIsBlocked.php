@@ -7,11 +7,11 @@ namespace Adrenth\LaravelHydroRaindrop\Events;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Class HydroIdRegistered
+ * Class UserLoginIsBlocked
  *
  * @package Adrenth\LaravelHydroRaindrop\Events
  */
-class HydroIdRegistered
+class UserLoginIsBlocked
 {
     /**
      * @var Model
@@ -19,17 +19,10 @@ class HydroIdRegistered
     public $user;
 
     /**
-     * @var string
-     */
-    public $hydroId;
-
-    /**
      * @param Model $user
-     * @param string $hydroId
      */
-    public function __construct(Model $user, string $hydroId)
+    public function __construct(Model $user)
     {
         $this->user = $user;
-        $this->hydroId = $hydroId;
     }
 }
