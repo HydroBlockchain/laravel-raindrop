@@ -122,7 +122,33 @@ Route::get('/admin', function () {
 
 It is possible to override the views provided by this package. 
 
-Please see the Laravel documentation page: https://laravel.com/docs/5.8/packages#views
+Please see the (Laravel documentation page)[https://laravel.com/docs/5.8/packages#views] about overriding views.
+
+## Helpers
+
+The `UserHelper` class can be used when developers want to create their own interface for handling the HydroID and enabling/disabling the MFA security layer.
+
+## Console commands
+
+| Command | Description |
+| --- | --- |
+| `hydro-raindrop:reset-hydro {user}` | Reset Hydro Raindrop MFA for user. |
+| `hydro-raindrop:transfer-hydro {userA} {userB}` | Transfer Hydro Raindrop MFA from user to another user. |
+| `hydro-raindrop:unblock-user {user}`  | Unblock given user which was blocked due too many failed MFA attempts. |
+
+## Events
+
+| Event| Payload | Description |
+| --- | --- | --- |
+| `UserIsBlocked` | `$user` | Fired after a user has been blocked duu too many failed MFA attempts. |
+| `UserLoginIsBlocked` | `$user` | Fired after a login but before the authentication session is destroyed. |
+| `UserMfaSessionStarted` | `$user` | Fired when MFA session is being started. |
+| `SignatureFailed` | `$user` | Fired when the MFA signature failed i.e. user enters invalid MFA message. |
+| `SignatureVerified` | `$user` | Fired when MFA signature is correct i.e. user enters valid MFA message. |
+| `HydroIdAlreadyMapped` | `$user`, `$hydroId` | Fired when the HydroID is already mapped to the application by any user. |
+| `HydroIdDoesNotExist` | `$user`, `$hydroId` | Fired after the HydroID has been sent to the API and the HydroID cannot be found. |
+| `HydroIdRegistered` | `$user`, `$hydroId` | Fired when HydroID is successfully registered. |
+| `HydroIdRegistrationFailed` | `$user`, `$hydroId` | Fired when HydroID registration failed after calling the API. API Error. |
 
 ## Further reading
 
